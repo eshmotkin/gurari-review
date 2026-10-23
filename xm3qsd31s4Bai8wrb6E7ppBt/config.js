@@ -1,0 +1,4 @@
+window.GURARI_CONFIG = {
+  COMMENT_WEBHOOK_URL: "",
+  ROUND2_TOTAL: 1269
+};
