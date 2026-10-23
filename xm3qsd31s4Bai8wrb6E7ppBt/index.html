@@ -89,9 +89,36 @@ function counter(){const f=n=>n==null?'—':n.toLocaleString('en-US');
  ctr.innerHTML=h;bar.innerHTML=[...CATS,['dup','',"var(--dup)"]].map(([k,,c])=>`<span style="flex:${C[k]};background:${c}"></span>`).join('');
  ctr.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{view=b.dataset.v;location.hash=view;render();scrollTo(0,0)});}
 let LIST=[];
-function cm(f,cat){const L=cms[f]||[];return `<details class="cm" data-f="${esc(f)}" data-c="${cat}"><summary>💬 Comment or question${L.length?` · ${L.length}`:''}</summary><textarea aria-label="Comment or question about ${esc(f)}" placeholder="Write a comment or question"></textarea><button class="send">Send</button><ul>${L.map(c=>`<li>${esc(c.text)}<time>${new Date(c.ts).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time><span class="cmst" aria-live="polite">${CFG.COMMENT_WEBHOOK_URL?'Sending…':'Saved on this device only'}</span></li>`).join('')}</ul></details>`}
-function bindCm(root){root.querySelectorAll('.cm .send').forEach(b=>b.onclick=()=>{const d=b.closest('.cm'),t=d.querySelector('textarea'),v=t.value.trim();if(!v)return;const f=d.dataset.f;(cms[f]=cms[f]||[]).push({text:v,ts:Date.now(),category:d.dataset.c,url:location.href});localStorage.gurariCm=JSON.stringify(cms);
- const w=document.createElement('div');w.innerHTML=cm(f,d.dataset.c);const n=w.firstChild;n.open=true;d.replaceWith(n);bindCm(n.parentElement)})}
+const RELAY={"topic": "gurari-6c3808c4a60575410bfcc36a", "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1V7UvvncK9CewF6ABiJA4YwbUTEo2ZZNSJVijuNXk+Q+CIxuCcaBS5i2ZYU4CH9bIct4vIRCXbIg6lSfoyzkzrZNYv0o2AB1VqdDDBmOod9WTwtgh/987cRWANd2pLAqTBPa1BS08l0JT8WjyMcqKprLbK1rZFgQ8DTMrsq8ibUvk76xeDyI4JwVOChjRiw3NpRUO8oNLKjieJR3nfIUautCDDaWFateybh2O2Aq3lQnQtjCfmATiGZmuz3VMrwWDn7DrBS7fPv9dHmLJI1W/QTPES5e9l6CLxebP7NG8oILpSyei7YRCC6NHhUoKVqFb19WMzstksH+5eEedHx74wIDAQAB"};const BASE=location.origin+location.pathname;
+const abs=u=>u?new URL(u,BASE).href.split('?')[0]:null;
+const b64=a=>btoa(String.fromCharCode(...new Uint8Array(a)));const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+let _pk;const pk=()=>_pk||(_pk=crypto.subtle.importKey('spki',unb64(RELAY.pub),{name:'RSA-OAEP',hash:'SHA-256'},false,['encrypt']));
+async function seal(o){const k=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));
+ const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},k,new TextEncoder().encode(JSON.stringify(o)));const ek=await crypto.subtle.encrypt({name:'RSA-OAEP'},await pk(),await crypto.subtle.exportKey('raw',k));
+ return JSON.stringify({v:2,ek:b64(ek),iv:b64(iv),ct:b64(ct)})}
+const Q=JSON.parse(localStorage.gurariQ||'{}');const saveQ=()=>localStorage.gurariQ=JSON.stringify(Q);const BK=[2e3,1e4,3e4,12e4,6e5];
+async function sendOne(id){const it=Q[id];if(!it||it.status=='sent'||it.busy)return;it.busy=1;it.attempt=(it.attempt||0)+1;it.payload.client={user_agent:navigator.userAgent,attempt:it.attempt};
+ const c=new AbortController();const t=setTimeout(()=>c.abort(),1e4);let st=0;
+ try{const r=await fetch('https://ntfy.sh/'+RELAY.topic,{method:'POST',body:await seal(it.payload),signal:c.signal});st=r.status}catch(e){st=0}clearTimeout(t);delete it.busy;
+ if(st>=200&&st<300)it.status='sent';else if(st==0||st==429||st>=500){it.status='queued';it.next=Date.now()+BK[Math.min(it.attempt-1,4)]}else{it.status='failed';it.err=st}
+ saveQ();paintSt(id)}
+function flush(force){Object.keys(Q).forEach(id=>{const it=Q[id];delete it.busy;if(it.status=='queued'&&(force||!it.next||it.next<=Date.now()))sendOne(id);else if(force&&it.status=='failed')sendOne(id)})}
+setInterval(()=>flush(false),2e3);addEventListener('online',()=>flush(true));
+function enqueue(id,p){Q[id]={payload:p,status:'queued',attempt:0};saveQ();sendOne(id)}
+function stTxt(id){const it=Q[id];if(!it)return 'Saved on this device only';if(it.status=='sent')return 'Sent ✓';if(it.status=='failed')return `Not sent (error ${it.err}). <button class="rt">Retry</button>`;
+ return it.attempt>1||it.next?`Not sent, will retry · <button class="rt">Retry now</button>`:'Sending…'}
+function paintSt(id){document.querySelectorAll(`.cmst[data-id="${id}"]`).forEach(e=>{e.innerHTML=stTxt(id);e.querySelectorAll('.rt').forEach(b=>b.onclick=()=>sendOne(id))})}
+function cm(f,cat){const L=cms[f]||[];return `<details class="cm" data-f="${esc(f)}" data-c="${cat}"><summary>💬 Comment or question${L.length?` · ${L.length}`:''}</summary><textarea maxlength="2000" aria-label="Comment or question about ${esc(f)}" placeholder="Write a comment or question"></textarea><button class="send">Send</button><ul>${L.map(c=>`<li>${esc(c.text)}<time>${new Date(c.ts).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time><span class="cmst" aria-live="polite" data-id="${c.id||''}">${stTxt(c.id)}</span></li>`).join('')}</ul></details>`}
+function ctxFor(f){const s=D.unsure.find(x=>x.file==f||x.cname==f);if(s)return ['unsure',[{role:'round2',file:s.file,url:abs(s.img)},...(s.cand?[{role:'round1_candidate',file:s.cname,url:abs(s.cand)}]:[])],s.file,'uns'];
+ const m=D.same.find(x=>x.file==f||x.cname==f);if(m)return ['same',[{role:'round2',file:m.file,url:abs(m.img)},{role:'round1',file:m.cname,url:abs(m.cand)}],m.file,'same'];
+ const d=D.dups.find(x=>x.file==f||x.keep==f);if(d)return ['dup',[{role:'kept_copy',file:d.keep,url:abs(d.img)}],d.file,'dup'];
+ const n=D.new.find(x=>x.file==f);return ['new',[{role:'round2',file:f,url:n?abs(n.img):null}],f,'new']}
+function bindCm(root){root.querySelectorAll('.cm .send').forEach(b=>b.onclick=()=>{const d=b.closest('.cm'),t=d.querySelector('textarea'),v=t.value.trim();if(!v||v.length>2000)return;const f=d.dataset.f;
+ const id='c_'+crypto.randomUUID();const [cat,imgs,key,vw]=ctxFor(f);const now=new Date();
+ (cms[f]=cms[f]||[]).push({id,text:v,ts:now.getTime()});localStorage.gurariCm=JSON.stringify(cms);
+ const p={schema:'gurari.comment.v1',comment_id:id,project:'Mark Gurari Project',image_id:f,images:imgs,category:cat,context:d.closest('#v')?'viewer':(d.closest('.qcard')?'pair_card':'card'),answer:ans[key]||null,text:v,created_at:now.toISOString(),page_url:BASE+'#'+vw,deep_link:BASE+'#'+vw+'&img='+encodeURIComponent(key)};
+ const w=document.createElement('div');Q[id]={payload:p,status:'queued',attempt:0};saveQ();w.innerHTML=cm(f,d.dataset.c);const n=w.firstChild;n.open=true;d.replaceWith(n);bindCm(n.parentElement);sendOne(id)});
+ root.querySelectorAll('.cmst[data-id]').forEach(e=>{const id=e.dataset.id;if(id)e.querySelectorAll('.rt').forEach(b=>b.onclick=()=>sendOne(id))})}
 function ph(src,alt,idx,side){return src?`<button class="ph" data-i="${idx}" data-s="${side||0}" aria-label="Enlarge ${esc(alt)}"><img loading="lazy" src="${esc(src)}" alt="${esc(alt)}"></button>`:`<div class="ph missing">Round-1 match not available<br>in the review data</div>`}
 function single(it,tag,cls,i){return `<article class="card">${ph(it.img,it.file,i)}<div class="meta"><span class="fn">${esc(it.file)}</span><span class="tag ${cls}">${tag}</span></div>${cm(it.file,tag)}</article>`}
 function pairCard(a,b,i,cls,tag){return `<article class="card"><div class="pair"><div class="side">${ph(a.src,a.t,i,0)}<div class="cap"><b>${esc(a.t)}</b>${a.s}</div>${cm(a.t,tag)}</div><div class="side">${ph(b.src,b.t,i,1)}<div class="cap"><b>${esc(b.t)}</b>${b.s}</div>${cm(b.t,tag)}</div></div><div class="meta"><span class="fn">${esc(a.t)}</span><span class="tag ${cls}">${tag}</span></div></article>`}
@@ -109,7 +136,7 @@ function render(){counter();let h;
  else h=(view=='uns'?'':(C.uns-Object.keys(ans).length>0?`<div class="note"><b>${C.uns-Object.keys(ans).length} photos need your answer.</b> <a href="#uns" onclick="view='uns';render();return false">Answer them →</a></div>`:''))+secs[view]();
  main.innerHTML=h;bindCm(main);
  main.querySelectorAll('.ph[data-i]').forEach(b=>b.onclick=()=>{const sec=b.closest('section');if(view=='all'){const k=['uns','new','same','dup'][[...main.querySelectorAll('section')].indexOf(sec)];secs[k]();}open(+b.dataset.i)});
- main.querySelectorAll('.btn[data-a]').forEach(b=>b.onclick=()=>{ans[b.dataset.f]=b.dataset.a;localStorage.gurariAns=JSON.stringify(ans);saved.textContent='Saved '+new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});render()});}
+ main.querySelectorAll('.btn[data-a]').forEach(b=>b.onclick=()=>{ans[b.dataset.f]=b.dataset.a;localStorage.gurariAns=JSON.stringify(ans);{const id='a_'+crypto.randomUUID();enqueue(id,{schema:'gurari.answer.v1',answer_id:id,image_id:b.dataset.f,answer:b.dataset.a,created_at:new Date().toISOString(),page_url:BASE+'#uns'})}saved.textContent='Saved '+new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});render()});}
 let cur=0;function open(i){cur=i;const it=LIST[i];if(!it)return;vt.textContent=`${it.map(x=>x.t).join('  vs  ')}   ·   ${i+1} / ${LIST.length}`;
  vs.innerHTML=it.map(x=>`<div class="pane">${it.length>1?`<div class="lbl"><b>${esc(x.s)}</b> · ${esc(x.t)}</div>`:''}<div class="vp">${x.src?`<img src="${esc(x.src)}" alt="">`:'<span style="color:#aaa">Not available</span>'}</div>${x.src?cm(x.t,'Viewer'):''}</div>`).join('');bindCm(vs);
  vs.querySelectorAll('.vp').forEach(p=>p.onclick=()=>p.classList.toggle('z'));v.classList.add('open');vx.focus()}
